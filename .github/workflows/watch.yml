@@ -1,0 +1,54 @@
+name: playtomic-watch
+
+# Runs in GitHub's cloud on a schedule -- no laptop, no phone terminal needed.
+# GitHub's minimum cron granularity is 5 minutes, and scheduled runs can be
+# delayed a few minutes under load. Telegram still pushes to your phone when a
+# spot opens (0 -> positive transition), even with everything of yours closed.
+on:
+  schedule:
+    - cron: "*/5 * * * *"      # every 5 minutes
+  workflow_dispatch: {}         # lets you click "Run workflow" to test on demand
+
+concurrency:
+  group: playtomic-watch
+  cancel-in-progress: false     # never interrupt a run mid-check
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      # Restore the JSON state (last-seen free counts) from the previous run so
+      # the 0 -> positive alert logic has memory across runs.
+      - name: Restore state
+        uses: actions/cache/restore@v4
+        with:
+          path: playtomic_state.json
+          key: playtomic-state-${{ github.run_id }}
+          restore-keys: playtomic-state-
+
+      - name: Watch one cycle
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: >
+          python playtomic_watch.py watch --once
+          --match "King of the Court (ALL LEVELS)"
+          --match "PADELHUB Social"
+          --min-level 3.01 --max-level 3.01
+          --state playtomic_state.json
+
+      # Persist the updated state for the next run.
+      - name: Save state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: playtomic_state.json
+          key: playtomic-state-${{ github.run_id }}
