@@ -67,6 +67,13 @@ SESSION_HEADERS = {
 def make_session():
     s = requests.Session()
     s.headers.update(SESSION_HEADERS)
+    # Route Playtomic requests through a residential/mobile proxy if configured.
+    # Playtomic's CloudFront WAF blocks datacenter IPs, so from a cloud server we
+    # tunnel the page-fetches through a residential proxy that looks like a normal
+    # home connection. Telegram sends do NOT use this proxy (see send_telegram).
+    proxy = os.environ.get("PLAYTOMIC_PROXY")
+    if proxy:
+        s.proxies = {"http": proxy, "https": proxy}
     return s
 
 
@@ -86,8 +93,10 @@ def fetch(session, url, max_retries=5):
             continue
         if r.status_code == 403 and "Request blocked" in r.text:
             raise RuntimeError(
-                "403 Request blocked by CloudFront WAF -- this host is not the "
-                "website. Use playtomic.com pages, not api.playtomic.io.")
+                f"403 Request blocked by CloudFront WAF for {url} -- this IP is "
+                "being blocked. Playtomic's WAF blocks many cloud/datacenter "
+                "hosts (e.g. GitHub Actions / Azure). Run from a residential "
+                "connection (home device) or a network that isn't blocked.")
         r.raise_for_status()
         return r
     raise RuntimeError(f"exhausted retries: {url}")
